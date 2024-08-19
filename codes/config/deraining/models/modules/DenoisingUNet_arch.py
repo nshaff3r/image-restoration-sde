@@ -86,6 +86,14 @@ class ConditionalUNet(nn.Module):
 
         if isinstance(time, int) or isinstance(time, float):
             time = torch.tensor([time]).to(xt.device)
+        if isinstance(time, (int, float)):
+            time = torch.tensor([time], device=xt.device)
+        elif isinstance(time, torch.Tensor):
+            if time.ndim == 0:
+                time = time.view(1)
+            elif time.ndim > 1:
+                time = time.view(-1)
+
         
         x = xt - cond
         x = torch.cat([x, cond], dim=1)

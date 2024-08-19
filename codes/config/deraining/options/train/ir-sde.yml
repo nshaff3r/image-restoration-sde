@@ -3,7 +3,7 @@ name: ir-sde
 use_tb_logger: true
 model: denoising
 distortion: derain
-gpu_ids: [0]
+gpu_ids: [0, 1, 2, 3]
 
 sde:
   max_sigma: 10
@@ -24,30 +24,29 @@ datasets:
   train:
     name: Train_Dataset
     mode: LQGT
-    dataroot_GT: datasets/rain/trainH/GT
-    dataroot_LQ: datasets/rain/trainH/LQ
+    dataroot_GT: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/trainH/GT
+    dataroot_LQ: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/trainH/LQ
 
     use_shuffle: true
     n_workers: 4  # per GPU
     batch_size: 4
-    GT_size: 128
-    LR_size: 128
+    GT_size: 256
+    LR_size: 256
     use_flip: true
     use_rot: true
-    color: RGB
+    color: gray
   val:
     name: Val_Dataset
     mode: LQGT
-    dataroot_GT: datasets/rain/testH/GT
-    dataroot_LQ: datasets/rain/testH/LQ
-
+    dataroot_GT: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/testH/GT
+    dataroot_LQ: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/testH/LQ
 
 #### network structures
 network_G:
   which_model_G: ConditionalUNet
   setting:
-    in_nc: 3
-    out_nc: 3
+    in_nc: 1
+    out_nc: 1
     nf: 64
     depth: 4
 

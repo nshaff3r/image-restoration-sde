@@ -7,6 +7,7 @@ import lmdb
 import numpy as np
 import torch
 import torch.utils.data as data
+import torchvision.transforms.functional as TF
 
 try:
     sys.path.append("..")
@@ -72,6 +73,10 @@ class LQGTDataset(data.Dataset):
         )
 
     def __getitem__(self, index):
+
+        original_index = index // 4
+        aug_type = index % 4
+
         if self.opt["data_type"] == "lmdb":
             if (self.GT_env is None) or (self.LR_env is None):
                 self._init_lmdb()
@@ -82,9 +87,9 @@ class LQGTDataset(data.Dataset):
         LR_size = self.opt["LR_size"]
 
         # get GT image
-        GT_path = self.GT_paths[index]
+        GT_path = self.GT_paths[original_index]
         if self.opt["data_type"] == "lmdb":
-            resolution = [int(s) for s in self.GT_sizes[index].split("_")]
+            resolution = [int(s) for s in self.GT_sizes[original_index].split("_")]
         else:
             resolution = None
         img_GT = util.read_img(
@@ -97,9 +102,9 @@ class LQGTDataset(data.Dataset):
 
         # get LR image
         if self.LR_paths:  # LR exist
-            LR_path = self.LR_paths[index]
+            LR_path = self.LR_paths[original_index]
             if self.opt["data_type"] == "lmdb":
-                resolution = [int(s) for s in self.LR_sizes[index].split("_")]
+                resolution = [int(s) for s in self.LR_sizes[original_index].split("_")]
             else:
                 resolution = None
             img_LR = util.read_img(self.LR_env, LR_path, resolution)
@@ -188,7 +193,24 @@ class LQGTDataset(data.Dataset):
         if LR_path is None:
             LR_path = GT_path
 
+        img_LR, img_GT = self.apply_augmentations(img_LR, img_GT, aug_type)	
+
         return {"LQ": img_LR, "GT": img_GT, "LQ_path": LR_path, "GT_path": GT_path}
 
+    def apply_augmentations(self, img_LR, img_GT, aug_type):
+        if aug_type == 0:
+            # Original image
+            return img_LR, img_GT
+        elif aug_type == 1:
+            # Horizontal flip
+            return TF.hflip(img_LR), TF.hflip(img_GT)
+        elif aug_type == 2:
+            # Vertical flip
+            return TF.vflip(img_LR), TF.vflip(img_GT)
+        elif aug_type == 3:
+            # Rotate 90 degrees
+            return TF.rotate(img_LR, 90), TF.rotate(img_GT, 90)
+
     def __len__(self):
-        return len(self.GT_paths)
+        # Multiply your original dataset size by 4
+        return len(self.GT_paths) * 4

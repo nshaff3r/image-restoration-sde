@@ -154,6 +154,7 @@ def main():
     for phase, dataset_opt in opt["datasets"].items():
         if phase == "train":
             train_set = create_dataset(dataset_opt)
+            print(f"Total length: {len(train_set)}")
             train_size = int(math.ceil(len(train_set) / dataset_opt["batch_size"]))
             total_iters = int(opt["train"]["niter"])
             total_epochs = int(math.ceil(total_iters / train_size))
@@ -229,15 +230,22 @@ def main():
         if opt["dist"]:
             train_sampler.set_epoch(epoch)
         for _, train_data in enumerate(train_loader):
+
+
+            if _ % 100  == 0:  # print every print_freq iterations
+                print(f'Epoch [{epoch+1}/{total_epochs}], Iteration [{_+1}/{len(train_loader)}]')
+
             current_step += 1
 
             if current_step > total_iters:
                 break
 
             LQ, GT = train_data["LQ"], train_data["GT"]
+            if LQ.numel() == 0 or GT.numel() == 0:
+                print(f"Skipping empty batch on rank {rank}")
+                continue
             timesteps, states = sde.generate_random_states(x0=GT, mu=LQ)
-
-            model.feed_data(states, LQ, GT) # xt, mu, x0
+            model.feed_data(states, LQ, GT)
             model.optimize_parameters(current_step, timesteps, sde)
             model.update_learning_rate(
                 current_step, warmup_iter=opt["train"]["warmup_iter"]
@@ -307,6 +315,7 @@ def main():
                     logger.info("Saving models and training states.")
                     model.save(current_step)
                     model.save_training_state(epoch, current_step)
+                    print(f"Training state save path: {opt['path']['training_state']}")
 
     if rank <= 0:
         logger.info("Saving the final model.")
@@ -317,3 +326,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

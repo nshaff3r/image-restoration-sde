@@ -354,7 +354,11 @@ class IRSDE(SDE):
         noises = torch.randn_like(state_mean)
         noise_level = self.sigma_bar(timesteps)
         noisy_states = noises * noise_level + state_mean
-
+        
+        if isinstance(timesteps, torch.Tensor) and timesteps.ndim == 0:
+            timesteps = timesteps.unsqueeze(0)  # Convert scalar to 1D tensor
+        elif not isinstance(timesteps, torch.Tensor):
+            timesteps = torch.tensor([timesteps], device=x0.device)
         return timesteps, noisy_states.to(torch.float32)
 
     def noise_state(self, tensor):
