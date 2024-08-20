@@ -1,9 +1,9 @@
 #### general settings
-name: ir-sde
+name: acetate-dl-sde
 use_tb_logger: true
 model: denoising
 distortion: derain
-gpu_ids: [0, 1, 2, 3]
+gpu_ids: [0]
 
 sde:
   max_sigma: 10
@@ -54,7 +54,7 @@ network_G:
 path:
   pretrain_model_G: ~
   strict_load: true
-  resume_state: ~
+  resume_state: /home/nolanshaffer/slurm/image-restoration-sde/experiments/deraining/acetate-dl-sde/training_state/4000.state
 
 #### training settings: learning rate scheme, loss
 train:
@@ -80,4 +80,4 @@ train:
 #### logger
 logger:
   print_freq: 100
-  save_checkpoint_freq: !!float 5e3
+  save_checkpoint_freq: !!float 1e3

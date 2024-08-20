@@ -5,6 +5,7 @@ import os
 import random
 import sys
 import copy
+import datetime
 
 import cv2
 import numpy as np
@@ -36,7 +37,7 @@ def init_dist(backend="nccl", **kwargs):
     num_gpus = torch.cuda.device_count()  # Returns the number of GPUs available
     torch.cuda.set_device(rank % num_gpus)
     dist.init_process_group(
-        backend=backend, **kwargs
+        backend=backend, timeout=datetime.timedelta(seconds=72000), **kwargs
     )  # Initializes the default distributed process group
 
 
@@ -81,6 +82,7 @@ def main():
 
     #### loading resume state if exists
     if opt["path"].get("resume_state", None):
+        print("resume state checking")
         # distributed resuming: all load into default GPU
         device_id = torch.cuda.current_device()
         resume_state = torch.load(
@@ -90,6 +92,7 @@ def main():
         option.check_resume(opt, resume_state["iter"])  # check resume options
     else:
         resume_state = None
+        print("no resume state found...")
 
     #### mkdir and loggers
     if rank <= 0:  # normal training (rank -1) OR distributed training (rank 0-7)
@@ -204,7 +207,8 @@ def main():
                 resume_state["epoch"], resume_state["iter"]
             )
         )
-
+        print("Resuming training from epoch: {}, iter: {}.".format(
+                resume_state["epoch"], resume_state["iter"]))
         start_epoch = resume_state["epoch"]
         current_step = resume_state["iter"]
         model.resume_training(resume_state)  # handle optimizers and schedulers
@@ -240,7 +244,7 @@ def main():
             if current_step > total_iters:
                 break
 
-            LQ, GT = train_data["LQ"], train_data["GT"]
+            LQ, GT = train_data["LQ"].to(device), train_data["GT"].to(device)
             if LQ.numel() == 0 or GT.numel() == 0:
                 print(f"Skipping empty batch on rank {rank}")
                 continue
@@ -313,9 +317,16 @@ def main():
             if current_step % opt["logger"]["save_checkpoint_freq"] == 0:
                 if rank <= 0:
                     logger.info("Saving models and training states.")
+                    print(f"Current step: {current_step}")
+                    print(f"Save checkpoint frequency: {opt['logger']['save_checkpoint_freq']}")
+                    print(f"Attempting to save model...")
                     model.save(current_step)
+                    print(f"Model save attempt completed.")
+                    print(f"Attempting to save training state...")
                     model.save_training_state(epoch, current_step)
+                    print(f"Training state save attempt completed.")
                     print(f"Training state save path: {opt['path']['training_state']}")
+                    print(f"Model save path: {opt['path']['models']}")
 
     if rank <= 0:
         logger.info("Saving the final model.")
