@@ -54,6 +54,8 @@ def main():
 
     # convert to NoneDict, which returns None for missing keys
     opt = option.dict_to_nonedict(opt)
+    for key, val in opt.items():
+        print("Testing: {}, {}".format(key, val))
 
     # choose small opt for SFTMD test, fill path of pre-trained model_F
     #### set random seed
@@ -151,7 +153,6 @@ def main():
         )
         logger = logging.getLogger("base")
 
-
     #### create train and val dataloader
     dataset_ratio = 200  # enlarge the size of each epoch
     for phase, dataset_opt in opt["datasets"].items():
@@ -236,8 +237,8 @@ def main():
         for _, train_data in enumerate(train_loader):
 
 
-            if _ % 100  == 0:  # print every print_freq iterations
-                print(f'Epoch [{epoch+1}/{total_epochs}], Iteration [{_+1}/{len(train_loader)}]')
+            if current_step % 100  == 0:  # print every print_freq iterations
+                print(f'Epoch [{epoch+1}/{total_epochs}], Iteration [{current_step+1}/{len(train_loader)}]')
 
             current_step += 1
 

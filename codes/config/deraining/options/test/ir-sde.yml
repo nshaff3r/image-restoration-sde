@@ -2,7 +2,7 @@ name: ir-sde-posterior
 suffix: ~  # add suffix to saved images
 model: denoising
 distortion: derain
-gpu_ids: [0]
+gpu_ids: [0,1,2,3]
 
 sde:
   max_sigma: 10
@@ -23,18 +23,18 @@ datasets:
   test1:
     name: Val_Dataset
     mode: LQGT
-    dataroot_GT: datasets/Rain100H/GT
-    dataroot_LQ: datasets/Rain100H/LQ
+    dataroot_GT: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/testH/GT
+    dataroot_LQ: /home/nolanshaffer/slurm/image-restoration-sde/codes/data/datasets/nypl/testH/LQ
 
 #### network structures
 network_G:
   which_model_G: ConditionalUNet
   setting:
-    in_nc: 3
-    out_nc: 3
+    in_nc: 1
+    out_nc: 1
     nf: 64
     depth: 4
 
 #### path
 path:
-  pretrain_model_G: pretrained/rain100h_sde.pth
+  pretrain_model_G: /home/nolanshaffer/slurm/image-restoration-sde/experiments/deraining/acetate-dl-sde/models/227500_G.pth
