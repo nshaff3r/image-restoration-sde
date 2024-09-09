@@ -40,7 +40,7 @@ class BaseModel:
         lr_groups_l: list for lr_groups. each for a optimizer"""
         for optimizer, lr_groups in zip(self.optimizers, lr_groups_l):
             for param_group, lr in zip(optimizer.param_groups, lr_groups):
-                param_group["lr"] = 4e-4
+                param_group["lr"] = lr
 
     def _get_init_lr(self):
         # get the initial lr, which is set by the scheduler
