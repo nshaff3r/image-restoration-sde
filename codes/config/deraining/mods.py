@@ -29,10 +29,16 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 
+import torch
+import torch.nn as nn
+import numpy as np
+
 class VAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim=512, n_distributions=10, latent_dim=20):
+    def __init__(self, input_dim, hidden_dim=512, n_distributions=1, latent_dim=1):
         super(VAE, self).__init__()
         self.n_distributions = n_distributions
+        self.latent_dim = latent_dim
+
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 32, 4, 2, 1),
             nn.ReLU(),
@@ -42,18 +48,42 @@ class VAE(nn.Module):
             nn.ReLU(),
             nn.Conv2d(128, 256, 4, 2, 1),
             nn.ReLU(),
+            nn.Conv2d(256, 512, 4, 2, 1),
+            nn.ReLU(),
+            nn.Conv2d(512, 1024, 4, 2, 1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),  # This will adapt to any input size
             nn.Flatten()
         )
-        
-        # Compute output size dynamically from input_dim
-        encoder_output_dim = 256 * (input_dim[0] // 16) * (input_dim[1] // 16)
-        self.fc_mu = nn.Linear(encoder_output_dim, n_distributions * latent_dim)
-        self.fc_logvar = nn.Linear(encoder_output_dim, n_distributions * latent_dim)
+
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 1, input_dim[0], input_dim[1])
+            dummy_output = self.encoder(dummy_input)
+            self.encoder_output_shape = dummy_output.shape[1:]
+
+        self.flattened_size = np.prod(self.encoder_output_shape)
+        self.fc_mu = nn.Linear(self.flattened_size, n_distributions * latent_dim)
+        self.fc_logvar = nn.Linear(self.flattened_size, n_distributions * latent_dim)
+
+        print(f"FC layer input size: {self.flattened_size}")
+        print(f"FC layer output size: {n_distributions * latent_dim}")
 
     def encode(self, x):
         h = self.encoder(x)
-        mu = self.fc_mu(h).view(-1, self.n_distributions, self.latent_dim)
-        logvar = self.fc_logvar(h).view(-1, self.n_distributions, self.latent_dim)
+        h_flat = h.view(h.size(0), -1)  # Flatten to [batch_size, flattened_size]
+        print(f"Encoder output shape: {h.shape}")
+        print(f"Flattened shape: {h_flat.shape}")
+
+        mu = self.fc_mu(h_flat)
+        logvar = self.fc_logvar(h_flat)
+
+        # Correct reshaping with batch size inferred
+        mu = mu.view(-1, self.n_distributions, self.latent_dim)
+        logvar = logvar.view(-1, self.n_distributions, self.latent_dim)
+
+        print(f"Mu shape after reshape: {mu.shape}")
+        print(f"Logvar shape after reshape: {logvar.shape}")
+
         return mu, logvar
 
     def reparameterize(self, mu, logvar):
@@ -66,25 +96,27 @@ class VAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
-
 class ScDE(nn.Module):
-    def __init__(self, input_dim, filename, latent_dim=20, n_distributions=10):
+    def __init__(self, filename, input_dim, latent_dim=20, n_distributions=10):
         super(ScDE, self).__init__()
         self.vae = VAE(input_dim, latent_dim=latent_dim, n_distributions=n_distributions)
         self.filename = filename
 
     def extract_scratch_content(self, image, mask):
+        print("TESTING", image.shape, mask.shape)
         return image * mask
 
     def forward(self, image):
-
-        print(file)
-        mask = Image.open(f"results/masks/mask/{self.filename}").convert('L')
+        print(f"Input image shape: {image.shape}")
+        
+        mask = Image.open(f"results/masks/mask/{self.filename.replace('.jpg', '.png')}").convert('L')
         transform = transforms.ToTensor()
         mask_tensor = transform(mask)
+        print(f"Mask shape: {mask_tensor.shape}")
 
         # Extract scratch content
         scratch_content = self.extract_scratch_content(image, mask_tensor)
+        print(f"Scratch content shape: {scratch_content.shape}")
         
         # Extract distribution using VAE
         z, mu, logvar = self.vae(scratch_content)
@@ -92,10 +124,10 @@ class ScDE(nn.Module):
         normal_dists = [torch.distributions.Normal(mu[:, i, :], torch.exp(0.5 * logvar[:, i, :]))
                         for i in range(self.vae.n_distributions)]
 
-        blur_map = custom_gaussian_blur(image)
+        blur_map = custom_gaussian_blur(image.squeeze().numpy())
+        blur_map_tensor = torch.from_numpy(blur_map).unsqueeze(0)
 
-        return z, mu, logvar, mask, blur_map
-
+        return z, mu, logvar, mask_tensor, blur_map_tensor
 
 # Usage
 def process_image(scde_model, image):
@@ -143,14 +175,14 @@ def custom_gaussian_blur(image, kernel_size=31, sigma=100):
     return blur_map
 
 if __name__ == "__main__":
-    detection()
-    for file in os.listdir("/Users/nshaff3r/Downloads/image-restoration-sde/codes/data/datasets/nypl/testH/LQ"):
-        image_path = os.path.join("/Users/nshaff3r/Downloads/image-restoration-sde/codes/data/datasets/nypl/testH/LQ", file)
+    # detection()
+    for file in os.listdir("/home/nolanshaffer/slurm/image-restoration-sde/codes/config/deraining/results/masks/input"):
+        image_path = os.path.join("/home/nolanshaffer/slurm/image-restoration-sde/codes/config/deraining/results/masks/input", file)
         image = Image.open(image_path).convert('L')
         transform = transforms.ToTensor()
         image_tensor = transform(image)
         _, height, width = image_tensor.shape
-        scde_model = ScDE(file, input_dim=(height, width))
+        scde_model = ScDE(file, (height, width))
 
         z, mu, logvar, mask = process_image(scde_model, image_tensor)
         
