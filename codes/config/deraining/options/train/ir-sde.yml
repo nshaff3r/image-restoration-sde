@@ -54,7 +54,7 @@ network_G:
 path:
   pretrain_model_G: ~
   strict_load: false
-  resume_state: /home/nolanshaffer/slurm/image-restoration-sde/experiments/deraining/acetate-dl-sde/training_state/347500.state
+  resume_state: /home/nolanshaffer/slurm/image-restoration-sde/experiments/deraining/acetate-dl-sde/training_state/697500.state
 
 #### training settings: learning rate scheme, loss
 train:

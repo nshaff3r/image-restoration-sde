@@ -1,3 +1,5 @@
+codes/config/deraining/result
+results/
 .DS_Store
 sftp-config.json
 .gitignore
