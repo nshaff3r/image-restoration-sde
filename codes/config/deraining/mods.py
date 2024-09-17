@@ -11,7 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DPP
 import torch.distributed as dist
 import os
 import random
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch
 import torch.utils.data as data
 from PIL import Image
@@ -39,63 +39,50 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 class VAE(nn.Module):
-    def __init__(self, in_channels=3, latent_dim=128, image_height=128, image_width=128):
+    def __init__(self, in_channels=1, latent_dim=128):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
-        self.image_height = image_height
-        self.image_width = image_width
         
-        # Encoder with more layers and increased filters
+        # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(512, 1024, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(1024, 2048, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            # Additional layers for larger feature maps
+            self._conv_block(in_channels, 32),
+            self._conv_block(32, 64),
+            self._conv_block(64, 128),
+            self._conv_block(128, 256),
         )
         
-        # Calculate output size of final convolution layer
-        # Example calculation: (image_size - kernel_size + 2*padding) / stride + 1
-        # This will give you the final feature map size after all downsampling
-        self.final_feature_size = 2048 * (self.image_height // 64) * (self.image_width // 64)
+        self.fc_mu = nn.Linear(256 * 8 * 8, latent_dim)
+        self.fc_logvar = nn.Linear(256 * 8 * 8, latent_dim)
         
-        # Fully connected layers for mean and log variance
-        self.fc_mu = nn.Linear(self.final_feature_size, latent_dim)
-        self.fc_logvar = nn.Linear(self.final_feature_size, latent_dim)
+        # Decoder
+        self.fc_decode = nn.Linear(latent_dim, 256 * 8 * 8)
         
-        # Fully connected layer to decode from latent space
-        self.fc_decode = nn.Linear(latent_dim, self.final_feature_size)
-        
-        # Decoder with more layers and larger upsampling
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(2048, 1024, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(1024, 512, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, in_channels, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid()  # Output range [0, 1]
+            self._conv_transpose_block(256, 128),
+            self._conv_transpose_block(128, 64),
+            self._conv_transpose_block(64, 32),
+            nn.ConvTranspose2d(32, in_channels, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()
+        )
+    
+    def _conv_block(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.2)
+        )
+    
+    def _conv_transpose_block(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.2)
         )
     
     def encode(self, x):
         h = self.encoder(x)
-        h = h.view(h.size(0), -1)  # Flatten
-        mu = self.fc_mu(h)
-        logvar = self.fc_logvar(h)
-        return mu, logvar
+        h = h.view(h.size(0), -1)
+        return self.fc_mu(h), self.fc_logvar(h)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -104,31 +91,29 @@ class VAE(nn.Module):
 
     def decode(self, z):
         h = self.fc_decode(z)
-        h = h.view(h.size(0), 2048, self.image_height // 64, self.image_width // 64)  # Adjust dimensions
-        x_recon = self.decoder(h)
-        return x_recon
+        h = h.view(h.size(0), 256, 8, 8)
+        return self.decoder(h)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
-        x_recon = self.decode(z)
-        return x_recon, mu, logvar
+        return self.decode(z), mu, logvar
 
 
-# VAE Loss (Reconstruction + KL Divergence)
-def vae_loss_function(recon_x, x, mu, logvar):
-    # Reconstruction loss: Mean Squared Error (MSE)
-    # Assuming the images are scaled between -1 and 1
-    recon_loss = F.mse_loss(recon_x, x, reduction='mean')
+# Cyclical annealing for beta
+def cyclical_annealing(epoch, n_epochs, n_cycles=4, ratio=0.5):
+    return np.sin(np.pi * ((epoch % (n_epochs // n_cycles)) / (n_epochs // n_cycles))) * ratio
+
+# Modified loss function with free bits
+def vae_loss_function(recon_x, x, mu, logvar, beta, free_bits=3.0):
+    recon_loss = F.mse_loss(recon_x, x, reduction='sum')
     
-    # KL divergence loss
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    kl_loss = kl_loss / x.size(0)  # Normalize by batch size
-    beta = 1 
-    # Total loss is the sum of the reconstruction loss and KL divergence loss
-    total_loss = recon_loss + beta * kl_loss
+    # KL divergence loss with free bits
+    kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    kld_loss = torch.max(kld_loss, torch.tensor(free_bits).to(kld_loss.device))
     
-    return total_loss
+    return recon_loss + beta * kld_loss
+
 
 class ScDE(nn.Module):
     def __init__(self, filename, input_dim, latent_dim=20, n_distributions=10):
@@ -362,6 +347,8 @@ def setup_distributed():
     torch.cuda.set_device(this_rank)
     print(f"Initialized distributed training on GPU {this_rank}")
 
+def cyclical_annealing_factor(epoch, n_epochs, n_cycles=4, ratio=0.5):
+    return np.sin(np.pi * ((epoch % (n_epochs // n_cycles)) / (n_epochs // n_cycles))) * ratio + (1 - ratio)
 
 if __name__ == "__main__":
     # setup_distributed()
@@ -375,41 +362,44 @@ if __name__ == "__main__":
 
     vae = VAE(in_channels=1, latent_dim=128).cuda()
     # vae = DPP(vae)
-    optimizer = optim.Adam(vae.parameters(), lr=1e-4)
+    optimizer = optim.Adam(vae.parameters(), lr=1e-3)
  
     load_model_weights(vae, MODEL_SAVE_PATH)
     avg_val_loss = validate_vae(dataloader, vae, vae_loss_function)
     print("VAL_LOSS: ", avg_val_loss)
-    save_reconstruction(vae, dataloader)
-    sys.exit()
-    scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
+    # save_reconstruction(vae, dataloader)
+    # sys.exit()
+    scheduler = CosineAnnealingLR(optimizer, T_max=500, eta_min=1e-6)
 
     def train_vae(dataloader, num_epochs=200):
         vae.train()
+        train_loss = 0
         for epoch in range(num_epochs):
+            vae.train()
             train_loss = 0
             for batch in dataloader:
-                images = batch['image'].cuda()  # Access 'image' from the dictionary
-                # Optionally, you might also need to handle masks here
-                # masks = batch['mask'].cuda()
-    
+                images = batch['image'].to(device)
                 optimizer.zero_grad()
-    
-                # Forward pass
+                
                 recon_images, mu, logvar = vae(images)
-                loss = vae_loss_function(recon_images, images, mu, logvar)
-    
-                # Backward pass and optimization
+                beta = cyclical_annealing_factor(epoch, num_epochs)
+                loss = vae_loss_function(recon_images, images, mu, logvar, beta)
+                
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=1.0)
                 optimizer.step()
-    
-                train_loss += loss
+                
+                train_loss += loss.item()
+            
             scheduler.step()
-            if epoch % 100 == 0:
-                 print("SAVING WEIGHTS: ", epoch)
-                 save_model_weights(vae, f"vae_weights_{epoch}.pth")
+            
+            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {train_loss/len(dataloader.dataset):.4f}, '
+                f'Beta: {beta:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}')
+            
+            if (epoch + 1) % 50 == 0:
+                save_model_weights(vae, f"vae_weights_epoch_{epoch+1}.pth")
+                save_reconstruction(vae, dataloader)
 
-            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {train_loss/len(dataloader.dataset):.4f}, LR: {scheduler.get_last_lr()[0]:.6f}')
     train_vae(dataloader, num_epochs=500)
     print("DONE")
     save_model_weights(vae, MODEL_SAVE_PATH)
